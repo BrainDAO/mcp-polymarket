@@ -30,7 +30,7 @@ npx @iqai/mcp-polymarket
 ### 🔧 Build from Source
 
 ```bash
-git clone https://github.com/IQAIcom/mcp-polymarket.git
+git clone https://github.com/IQOfficial/mcp-polymarket.git
 cd mcp-polymarket
 pnpm install
 pnpm run build
