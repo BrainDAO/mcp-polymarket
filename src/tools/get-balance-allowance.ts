@@ -1,4 +1,4 @@
-import { AssetType } from "@polymarket/clob-client";
+import { AssetType } from "@polymarket/clob-client-v2";
 import { z } from "zod";
 import { tradeApi } from "../services/trading.js";
 import { withApprovalGuard } from "../util/with-approval-guard.js";

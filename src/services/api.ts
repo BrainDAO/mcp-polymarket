@@ -1,28 +1,16 @@
-import { GammaSDK, PolymarketSDK } from "@jsr/hk__polymarket";
-import type { OrderBookSummary } from "@polymarket/clob-client";
+import { GammaSDK } from "@jsr/hk__polymarket";
+import type { OrderBookSummary } from "@polymarket/clob-client-v2";
 import { type BaseConfig, getConfig } from "./config.js";
 
 export type PolymarketApiConfig = Partial<BaseConfig>;
 
 export class PolymarketAPI {
 	private gamma: GammaSDK;
-	private clobSdk: PolymarketSDK | null = null;
 	private readonly cfg: BaseConfig;
 
 	constructor(config: PolymarketApiConfig = {}) {
 		this.cfg = getConfig(config);
 		this.gamma = new GammaSDK();
-
-		// Eagerly initialize CLOB SDK if creds exist
-		if (this.cfg.privateKey && this.cfg.funderAddress) {
-			this.clobSdk = new PolymarketSDK({
-				privateKey: this.cfg.privateKey,
-				funderAddress: this.cfg.funderAddress,
-				host: this.cfg.host,
-				chainId: this.cfg.chainId,
-				signatureType: this.cfg.signatureType,
-			});
-		}
 	}
 
 	/**
@@ -73,11 +61,9 @@ export class PolymarketAPI {
 
 	/**
 	 * Retrieves the order book for a specific market token.
+	 * The CLOB /book endpoint is public, so this works without credentials.
 	 */
 	async getOrderBook(tokenId: string): Promise<OrderBookSummary> {
-		if (this.clobSdk) return this.clobSdk.getBook(tokenId);
-
-		// Fallback to public endpoint when credentials are not provided
 		const url = `${this.cfg.host}/book?token_id=${encodeURIComponent(tokenId)}`;
 		const res = await fetch(url);
 		if (!res.ok) {

@@ -16,7 +16,7 @@ const approveAllowancesSchema = z.object({
 export const approveAllowancesTool = {
 	name: "approve_allowances",
 	description:
-		"Grant the USDC and Conditional Tokens approvals required to trade on Polymarket. Automatically approves only the contracts that don't already have approvals set. Includes both regular and NegRisk markets. These approvals are standard ERC20/ERC1155 approvals, revocable at any time in your wallet.",
+		"Grant the pUSD and Conditional Token approvals required for Polymarket V2 trading and position management. Automatically approves only contracts that do not already have permission. Approvals are revocable at any time in your wallet.",
 	parameters: approveAllowancesSchema,
 	execute: async (args: z.infer<typeof approveAllowancesSchema>) => {
 		const svc = new PolymarketApprovals();

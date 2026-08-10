@@ -1,65 +1,30 @@
 import { z } from "zod";
 import { redemptionApi } from "../services/redemption.js";
 
-const redeemPositionsSchema = z
-	.object({
-		conditionId: z
-			.string()
-			.describe(
-				"The condition ID (market ID) for the resolved market. This is typically a 32-byte hex string.",
-			),
-		tokenId: z
-			.string()
-			.optional()
-			.describe(
-				"The token ID of the position to redeem. Required for negRisk markets, optional for regular markets.",
-			),
-		outcomeIndex: z
-			.union([z.literal(0), z.literal(1)])
-			.optional()
-			.describe(
-				"The outcome index: 0 for Yes/first outcome, 1 for No/second outcome. Used for negRisk markets to determine which tokens to redeem.",
-			),
-		negRisk: z
-			.boolean()
-			.optional()
-			.default(false)
-			.describe(
-				"Whether this is a negative risk market. Negative risk markets use the NegRiskAdapter contract for redemption. Default: false",
-			),
-	})
-	.superRefine((data, ctx) => {
-		if (data.negRisk) {
-			if (!data.tokenId) {
-				ctx.addIssue({
-					code: z.ZodIssueCode.custom,
-					message:
-						"The `tokenId` parameter is required when `negRisk` is true.",
-					path: ["tokenId"],
-				});
-			}
-			if (data.outcomeIndex === undefined) {
-				ctx.addIssue({
-					code: z.ZodIssueCode.custom,
-					message:
-						"The `outcomeIndex` parameter is required when `negRisk` is true.",
-					path: ["outcomeIndex"],
-				});
-			}
-		}
-	});
+const redeemPositionsSchema = z.object({
+	conditionId: z
+		.string()
+		.describe(
+			"The condition ID for the resolved market. This is typically a 32-byte hex string.",
+		),
+	negRisk: z
+		.boolean()
+		.optional()
+		.default(false)
+		.describe(
+			"Whether this is a negative-risk market. Selects the V2 NegRisk collateral adapter when true. Default: false",
+		),
+});
 
 export const redeemPositionsTool = {
 	name: "redeem_positions",
 	description:
-		"Redeem (claim) winnings from a resolved Polymarket prediction market. Use this to collect USDC from positions in markets that have been settled. For regular markets, you need the conditionId. For negative risk markets, you also need the tokenId and should set negRisk=true. The market must be resolved before redemption is possible.",
+		"Redeem all winning outcome tokens from a resolved Polymarket market into pUSD. Provide the conditionId and set negRisk=true for negative-risk markets.",
 	parameters: redeemPositionsSchema,
 	execute: async (args: z.infer<typeof redeemPositionsSchema>) => {
 		try {
 			const result = await redemptionApi.redeemPositions({
 				conditionId: args.conditionId,
-				tokenId: args.tokenId,
-				outcomeIndex: args.outcomeIndex,
 				negRisk: args.negRisk,
 			});
 

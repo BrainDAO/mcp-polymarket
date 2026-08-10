@@ -3,11 +3,16 @@ import type {
 	OpenOrderParams,
 	TickSize,
 	TradeParams,
-	UserMarketOrder,
-	UserOrder,
-} from "@polymarket/clob-client";
-import { ClobClient, OrderType, Side } from "@polymarket/clob-client";
-import { providers, Wallet } from "ethers";
+	UserMarketOrderV2,
+	UserOrderV2,
+} from "@polymarket/clob-client-v2";
+import {
+	AssetType,
+	ClobClient,
+	OrderType,
+	Side,
+} from "@polymarket/clob-client-v2";
+import { providers, utils, Wallet } from "ethers";
 import { log } from "../util/log.js";
 import { PolymarketApprovals } from "./approvals.js";
 import { getConfig } from "./config.js";
@@ -72,48 +77,51 @@ export class PolymarketTrading {
 	}
 
 	/**
-	 * Initialize the CLOB client with credentials
+	 * Initialize the CLOB client with credentials.
+	 * Uses the v2 SDK (post-April-2026 migration). The constructor takes an options
+	 * object with `chain` (not `chainId`), and createOrDeriveApiKey is now a single call.
 	 */
 	async initialize(): Promise<void> {
 		if (this.client) return;
-		let apiCreds: {
-			key: string;
-			secret: string;
-			passphrase: string;
-			apiKey?: string;
-		};
 		const cfg = getConfig(this.config);
-		// Use StaticJsonRpcProvider to completely skip network auto-detection
-		// This prevents "could not detect network" errors from flaky RPCs
+		// Use StaticJsonRpcProvider to skip network auto-detection.
 		const provider = new providers.StaticJsonRpcProvider(
 			cfg.rpcUrl,
 			cfg.chainId,
 		);
 		const ethersSigner = new Wallet(this.config.privateKey, provider);
 		this.signer = ethersSigner;
-		const host = cfg.host;
-		const tempClient = new ClobClient(host, cfg.chainId, ethersSigner);
-		// Attempt to first derive, and on failure create a new
-		// There seems to be an issue with createOrDeriveApiKey()
-		// See: https://github.com/Polymarket/clob-client/issues/202
-		try {
-			apiCreds = await tempClient.deriveApiKey();
-		} catch {
-			apiCreds = await tempClient.createApiKey();
+		const clientOptions = {
+			host: cfg.host,
+			chain: cfg.chainId,
+			signer: ethersSigner,
+			signatureType: cfg.signatureType,
+			funderAddress: cfg.funderAddress,
+		};
+
+		// The SDK helper intentionally suppresses create-key errors before deriving,
+		// but it can also return empty credentials after a transient CLOB failure.
+		const bootstrapClient = new ClobClient(clientOptions);
+		let apiCreds = await bootstrapClient.createOrDeriveApiKey();
+		if (!apiCreds.key || !apiCreds.secret || !apiCreds.passphrase) {
+			apiCreds = await new ClobClient({
+				...clientOptions,
+				throwOnError: true,
+			}).deriveApiKey();
+		}
+		if (!apiCreds.key || !apiCreds.secret || !apiCreds.passphrase) {
+			throw new Error("CLOB returned incomplete API credentials");
 		}
 
-		apiCreds.apiKey = apiCreds.key;
-		// Create client with credentials
-		this.client = new ClobClient(
-			host,
-			cfg.chainId || 137,
-			ethersSigner,
-			apiCreds,
-			cfg.signatureType,
-			cfg.funderAddress,
-		);
+		// Strict error handling prevents API error payloads from masquerading as
+		// successful method results.
+		this.client = new ClobClient({
+			...clientOptions,
+			creds: apiCreds,
+			throwOnError: true,
+		});
 
-		log("Polymarket trading client initialized");
+		log("Polymarket trading client initialized (v2 SDK)");
 		log(`  - Signer: ${await ethersSigner.getAddress()}`);
 		log(`  - Signature Type: ${cfg.signatureType}`);
 		if (cfg.funderAddress) {
@@ -156,18 +164,15 @@ export class PolymarketTrading {
 	}
 
 	/**
-	 * Throw a structured error if approvals are missing.
-	 * Skips the approval check for funder/proxy wallets (signature type 2), as approvals are managed elsewhere.
+	 * Require direct EOA approvals before trading.
+	 * Account-wallet approvals are managed by Polymarket and cannot be submitted
+	 * by the signer EOA used for CLOB authentication.
 	 */
 	private async assertApprovals(): Promise<void> {
-		// When using proxy wallet (funder), skip approval check since
-		// proxy wallets already have approvals set up via Polymarket UI
-		if (this.config.funderAddress && this.config.signatureType === 2) {
-			// Proxy wallet mode - approvals managed by Polymarket
-			return;
-		}
+		if (this.config.funderAddress) return;
+
 		const approvals = new PolymarketApprovals(this.getSigner());
-		await approvals.assertApproved();
+		await approvals.assertTradingApproved();
 	}
 
 	/**
@@ -202,6 +207,17 @@ export class PolymarketTrading {
 		return params;
 	}
 
+	private async getBuyCollateralBalance(
+		side: Side,
+	): Promise<number | undefined> {
+		if (side !== Side.BUY) return undefined;
+
+		const { balance } = await this.getClient().getBalanceAllowance({
+			asset_type: AssetType.COLLATERAL,
+		});
+		return Number(utils.formatUnits(balance, 6));
+	}
+
 	/**
 	 * Clear the market parameters cache (useful if market settings change)
 	 */
@@ -223,11 +239,9 @@ export class PolymarketTrading {
 		side: "BUY" | "SELL";
 		orderType?: "GTC" | "GTD";
 		expiration?: number;
-		nonce?: number;
 		// Optional overrides (if you know the market params)
 		tickSize?: string;
 		negRisk?: boolean;
-		feeRateBps?: number;
 	}): Promise<unknown> {
 		await this.ensureInitialized();
 		await this.assertApprovals();
@@ -237,17 +251,18 @@ export class PolymarketTrading {
 		const orderType: OrderType.GTC | OrderType.GTD =
 			orderTypeStr === "GTD" ? OrderType.GTD : OrderType.GTC;
 
-		// Auto-detect market parameters if not provided
 		const marketParams = await this.getMarketParams(args.tokenId);
+		const userCollateralBalance = await this.getBuyCollateralBalance(side);
 
-		const userOrder: UserOrder = {
+		const userOrder: UserOrderV2 = {
 			tokenID: args.tokenId,
 			price: args.price,
 			size: args.size,
-			side: side,
-			expiration: args.expiration,
-			nonce: args.nonce,
-			feeRateBps: args.feeRateBps ?? marketParams.feeRateBps,
+			side,
+			...(args.expiration !== undefined && { expiration: args.expiration }),
+			...(userCollateralBalance !== undefined && {
+				userUSDCBalance: userCollateralBalance,
+			}),
 		};
 
 		const client = this.getClient();
@@ -281,7 +296,6 @@ export class PolymarketTrading {
 		// Optional overrides
 		tickSize?: string;
 		negRisk?: boolean;
-		feeRateBps?: number;
 	}): Promise<unknown> {
 		await this.ensureInitialized();
 		await this.assertApprovals();
@@ -291,14 +305,16 @@ export class PolymarketTrading {
 		const orderType: OrderType.FOK | OrderType.FAK =
 			orderTypeStr === "FAK" ? OrderType.FAK : OrderType.FOK;
 
-		// Auto-detect market parameters if not provided
 		const marketParams = await this.getMarketParams(args.tokenId);
+		const userCollateralBalance = await this.getBuyCollateralBalance(side);
 
-		const userMarketOrder: UserMarketOrder = {
+		const userMarketOrder: UserMarketOrderV2 = {
 			tokenID: args.tokenId,
 			amount: args.amount,
-			side: side,
-			feeRateBps: args.feeRateBps ?? marketParams.feeRateBps,
+			side,
+			...(userCollateralBalance !== undefined && {
+				userUSDCBalance: userCollateralBalance,
+			}),
 		};
 
 		const client = this.getClient();

@@ -9,26 +9,38 @@ import {
 import { log } from "../util/log.js";
 import { getConfig, POLYGON_ADDRESSES } from "./config.js";
 
+type ApprovalKey =
+	| "COLLATERAL_ALLOWANCE_FOR_EXCHANGE"
+	| "CTF_APPROVAL_FOR_EXCHANGE"
+	| "COLLATERAL_ALLOWANCE_FOR_NEG_RISK_EXCHANGE"
+	| "CTF_APPROVAL_FOR_NEG_RISK_EXCHANGE"
+	| "COLLATERAL_ALLOWANCE_FOR_CTF_ADAPTER"
+	| "CTF_APPROVAL_FOR_CTF_ADAPTER"
+	| "COLLATERAL_ALLOWANCE_FOR_NEG_RISK_CTF_ADAPTER"
+	| "CTF_APPROVAL_FOR_NEG_RISK_CTF_ADAPTER";
+
 export type ApprovalCheck = {
-	usdcAllowanceForCTF: string;
-	usdcAllowanceForExchange: string;
+	collateralAllowanceForExchange: string;
 	ctfApprovedForExchange: boolean;
-	usdcAllowanceForNegRiskExchange: string;
-	usdcAllowanceForNegRiskAdapter: string;
+	collateralAllowanceForNegRiskExchange: string;
 	ctfApprovedForNegRiskExchange: boolean;
-	ctfApprovedForNegRiskAdapter: boolean;
-	missing: Array<
-		| "USDC_ALLOWANCE_FOR_CTF"
-		| "USDC_ALLOWANCE_FOR_EXCHANGE"
-		| "CTF_APPROVAL_FOR_EXCHANGE"
-		| "USDC_ALLOWANCE_FOR_NEG_RISK_EXCHANGE"
-		| "USDC_ALLOWANCE_FOR_NEG_RISK_ADAPTER"
-		| "CTF_APPROVAL_FOR_NEG_RISK_EXCHANGE"
-		| "CTF_APPROVAL_FOR_NEG_RISK_ADAPTER"
-	>;
+	collateralAllowanceForCtfAdapter: string;
+	ctfApprovedForCtfAdapter: boolean;
+	collateralAllowanceForNegRiskCtfAdapter: string;
+	ctfApprovedForNegRiskCtfAdapter: boolean;
+	missing: ApprovalKey[];
 	addresses: typeof POLYGON_ADDRESSES;
 	owner: string;
 };
+
+function isTradingApproval(key: ApprovalKey): boolean {
+	return (
+		key === "COLLATERAL_ALLOWANCE_FOR_EXCHANGE" ||
+		key === "CTF_APPROVAL_FOR_EXCHANGE" ||
+		key === "COLLATERAL_ALLOWANCE_FOR_NEG_RISK_EXCHANGE" ||
+		key === "CTF_APPROVAL_FOR_NEG_RISK_EXCHANGE"
+	);
+}
 
 /**
  * Class-style approvals service for consistency with other services.
@@ -87,9 +99,9 @@ export class PolymarketApprovals {
 
 	static rationale(): string {
 		return [
-			"Trading on Polymarket requires granting limited permissions:",
-			"- USDC allowances let CTF, Exchange, and NegRisk contracts move USDC for minting/settling.",
-			"- CTF setApprovalForAll lets Exchange and NegRisk move position tokens during settlement.",
+			"Polymarket V2 requires limited pUSD and Conditional Token permissions:",
+			"- pUSD allowances let the V2 exchanges and collateral adapters move collateral.",
+			"- CTF setApprovalForAll lets those contracts move position tokens.",
 			"Standard ERC20/ERC1155 approvals set to MaxUint. Revocable anytime in your wallet.",
 		].join("\n");
 	}
@@ -97,53 +109,76 @@ export class PolymarketApprovals {
 	/** Check current approval state for the signer's wallet address */
 	async check(): Promise<ApprovalCheck> {
 		const {
-			CTF_ADDRESS,
 			EXCHANGE_ADDRESS,
 			NEG_RISK_EXCHANGE_ADDRESS,
-			NEG_RISK_ADAPTER_ADDRESS,
+			CTF_COLLATERAL_ADAPTER_ADDRESS,
+			NEG_RISK_CTF_COLLATERAL_ADAPTER_ADDRESS,
 		} = POLYGON_ADDRESSES;
-		const usdc = getUsdcContract(this.signer);
+		const collateral = getCollateralContract(this.signer);
 		const ctf = getCtfContract(this.signer);
 		const addr = this.signer.address;
 
 		const [
-			usdcCtf,
-			usdcExch,
-			ctfExch,
-			usdcNegExch,
-			usdcNegAdapt,
-			ctfNegExch,
-			ctfNegAdapt,
+			collateralExchange,
+			ctfExchange,
+			collateralNegRiskExchange,
+			ctfNegRiskExchange,
+			collateralCtfAdapter,
+			ctfAdapter,
+			collateralNegRiskCtfAdapter,
+			ctfNegRiskAdapter,
 		] = await Promise.all([
-			usdc.allowance(addr, CTF_ADDRESS) as Promise<BigNumber>,
-			usdc.allowance(addr, EXCHANGE_ADDRESS) as Promise<BigNumber>,
+			collateral.allowance(addr, EXCHANGE_ADDRESS) as Promise<BigNumber>,
 			ctf.isApprovedForAll(addr, EXCHANGE_ADDRESS) as Promise<boolean>,
-			usdc.allowance(addr, NEG_RISK_EXCHANGE_ADDRESS) as Promise<BigNumber>,
-			usdc.allowance(addr, NEG_RISK_ADAPTER_ADDRESS) as Promise<BigNumber>,
+			collateral.allowance(
+				addr,
+				NEG_RISK_EXCHANGE_ADDRESS,
+			) as Promise<BigNumber>,
 			ctf.isApprovedForAll(addr, NEG_RISK_EXCHANGE_ADDRESS) as Promise<boolean>,
-			ctf.isApprovedForAll(addr, NEG_RISK_ADAPTER_ADDRESS) as Promise<boolean>,
+			collateral.allowance(
+				addr,
+				CTF_COLLATERAL_ADAPTER_ADDRESS,
+			) as Promise<BigNumber>,
+			ctf.isApprovedForAll(
+				addr,
+				CTF_COLLATERAL_ADAPTER_ADDRESS,
+			) as Promise<boolean>,
+			collateral.allowance(
+				addr,
+				NEG_RISK_CTF_COLLATERAL_ADAPTER_ADDRESS,
+			) as Promise<BigNumber>,
+			ctf.isApprovedForAll(
+				addr,
+				NEG_RISK_CTF_COLLATERAL_ADAPTER_ADDRESS,
+			) as Promise<boolean>,
 		]);
 
-		const missing: ApprovalCheck["missing"] = [];
-		if (!usdcCtf.gt(constants.Zero)) missing.push("USDC_ALLOWANCE_FOR_CTF");
-		if (!usdcExch.gt(constants.Zero))
-			missing.push("USDC_ALLOWANCE_FOR_EXCHANGE");
-		if (!ctfExch) missing.push("CTF_APPROVAL_FOR_EXCHANGE");
-		if (!usdcNegExch.gt(constants.Zero))
-			missing.push("USDC_ALLOWANCE_FOR_NEG_RISK_EXCHANGE");
-		if (!usdcNegAdapt.gt(constants.Zero))
-			missing.push("USDC_ALLOWANCE_FOR_NEG_RISK_ADAPTER");
-		if (!ctfNegExch) missing.push("CTF_APPROVAL_FOR_NEG_RISK_EXCHANGE");
-		if (!ctfNegAdapt) missing.push("CTF_APPROVAL_FOR_NEG_RISK_ADAPTER");
+		const missing: ApprovalKey[] = [];
+		if (!collateralExchange.gt(constants.Zero))
+			missing.push("COLLATERAL_ALLOWANCE_FOR_EXCHANGE");
+		if (!ctfExchange) missing.push("CTF_APPROVAL_FOR_EXCHANGE");
+		if (!collateralNegRiskExchange.gt(constants.Zero))
+			missing.push("COLLATERAL_ALLOWANCE_FOR_NEG_RISK_EXCHANGE");
+		if (!ctfNegRiskExchange) missing.push("CTF_APPROVAL_FOR_NEG_RISK_EXCHANGE");
+		if (!collateralCtfAdapter.gt(constants.Zero))
+			missing.push("COLLATERAL_ALLOWANCE_FOR_CTF_ADAPTER");
+		if (!ctfAdapter) missing.push("CTF_APPROVAL_FOR_CTF_ADAPTER");
+		if (!collateralNegRiskCtfAdapter.gt(constants.Zero))
+			missing.push("COLLATERAL_ALLOWANCE_FOR_NEG_RISK_CTF_ADAPTER");
+		if (!ctfNegRiskAdapter)
+			missing.push("CTF_APPROVAL_FOR_NEG_RISK_CTF_ADAPTER");
 
 		return {
-			usdcAllowanceForCTF: usdcCtf.toString(),
-			usdcAllowanceForExchange: usdcExch.toString(),
-			ctfApprovedForExchange: ctfExch,
-			usdcAllowanceForNegRiskExchange: usdcNegExch.toString(),
-			usdcAllowanceForNegRiskAdapter: usdcNegAdapt.toString(),
-			ctfApprovedForNegRiskExchange: ctfNegExch,
-			ctfApprovedForNegRiskAdapter: ctfNegAdapt,
+			collateralAllowanceForExchange: collateralExchange.toString(),
+			ctfApprovedForExchange: ctfExchange,
+			collateralAllowanceForNegRiskExchange:
+				collateralNegRiskExchange.toString(),
+			ctfApprovedForNegRiskExchange: ctfNegRiskExchange,
+			collateralAllowanceForCtfAdapter: collateralCtfAdapter.toString(),
+			ctfApprovedForCtfAdapter: ctfAdapter,
+			collateralAllowanceForNegRiskCtfAdapter:
+				collateralNegRiskCtfAdapter.toString(),
+			ctfApprovedForNegRiskCtfAdapter: ctfNegRiskAdapter,
 			missing,
 			addresses: POLYGON_ADDRESSES,
 			owner: addr,
@@ -151,13 +186,14 @@ export class PolymarketApprovals {
 	}
 
 	/**
-	 * Throw a structured error if approvals are missing.
+	 * Throw a structured error when exchange approvals required for trading are missing.
 	 */
-	async assertApproved(): Promise<void> {
+	async assertTradingApproved(): Promise<void> {
 		const status = await this.check();
+		const missing = status.missing.filter(isTradingApproval);
 
-		if (status.missing.length > 0) {
-			throw new ApprovalRequiredError(status);
+		if (missing.length > 0) {
+			throw new ApprovalRequiredError({ ...status, missing });
 		}
 	}
 
@@ -170,12 +206,12 @@ export class PolymarketApprovals {
 		waitedConfirmations: number;
 	}> {
 		const {
-			CTF_ADDRESS,
 			EXCHANGE_ADDRESS,
 			NEG_RISK_EXCHANGE_ADDRESS,
-			NEG_RISK_ADAPTER_ADDRESS,
+			CTF_COLLATERAL_ADAPTER_ADDRESS,
+			NEG_RISK_CTF_COLLATERAL_ADAPTER_ADDRESS,
 		} = POLYGON_ADDRESSES;
-		const usdc = getUsdcContract(this.signer);
+		const collateral = getCollateralContract(this.signer);
 		const ctf = getCtfContract(this.signer);
 		const current = await this.check();
 		const waitConfs = opts?.waitForConfirmations ?? 0;
@@ -183,17 +219,11 @@ export class PolymarketApprovals {
 		const txHashes: string[] = [];
 		let nonce = await this.getPendingNonce();
 
-		// Define all possible approvals
 		const approvals = [
 			{
-				key: "USDC_ALLOWANCE_FOR_CTF",
-				fn: () => usdc.approve(CTF_ADDRESS, constants.MaxUint256),
-				label: "USDC->CTF",
-			},
-			{
-				key: "USDC_ALLOWANCE_FOR_EXCHANGE",
-				fn: () => usdc.approve(EXCHANGE_ADDRESS, constants.MaxUint256),
-				label: "USDC->Exchange",
+				key: "COLLATERAL_ALLOWANCE_FOR_EXCHANGE",
+				fn: () => collateral.approve(EXCHANGE_ADDRESS, constants.MaxUint256),
+				label: "pUSD->Exchange",
 			},
 			{
 				key: "CTF_APPROVAL_FOR_EXCHANGE",
@@ -201,14 +231,10 @@ export class PolymarketApprovals {
 				label: "CTF->Exchange",
 			},
 			{
-				key: "USDC_ALLOWANCE_FOR_NEG_RISK_EXCHANGE",
-				fn: () => usdc.approve(NEG_RISK_EXCHANGE_ADDRESS, constants.MaxUint256),
-				label: "USDC->NegRiskExchange",
-			},
-			{
-				key: "USDC_ALLOWANCE_FOR_NEG_RISK_ADAPTER",
-				fn: () => usdc.approve(NEG_RISK_ADAPTER_ADDRESS, constants.MaxUint256),
-				label: "USDC->NegRiskAdapter",
+				key: "COLLATERAL_ALLOWANCE_FOR_NEG_RISK_EXCHANGE",
+				fn: () =>
+					collateral.approve(NEG_RISK_EXCHANGE_ADDRESS, constants.MaxUint256),
+				label: "pUSD->NegRiskExchange",
 			},
 			{
 				key: "CTF_APPROVAL_FOR_NEG_RISK_EXCHANGE",
@@ -216,13 +242,36 @@ export class PolymarketApprovals {
 				label: "CTF->NegRiskExchange",
 			},
 			{
-				key: "CTF_APPROVAL_FOR_NEG_RISK_ADAPTER",
-				fn: () => ctf.setApprovalForAll(NEG_RISK_ADAPTER_ADDRESS, true),
-				label: "CTF->NegRiskAdapter",
+				key: "COLLATERAL_ALLOWANCE_FOR_CTF_ADAPTER",
+				fn: () =>
+					collateral.approve(
+						CTF_COLLATERAL_ADAPTER_ADDRESS,
+						constants.MaxUint256,
+					),
+				label: "pUSD->CtfCollateralAdapter",
+			},
+			{
+				key: "CTF_APPROVAL_FOR_CTF_ADAPTER",
+				fn: () => ctf.setApprovalForAll(CTF_COLLATERAL_ADAPTER_ADDRESS, true),
+				label: "CTF->CtfCollateralAdapter",
+			},
+			{
+				key: "COLLATERAL_ALLOWANCE_FOR_NEG_RISK_CTF_ADAPTER",
+				fn: () =>
+					collateral.approve(
+						NEG_RISK_CTF_COLLATERAL_ADAPTER_ADDRESS,
+						constants.MaxUint256,
+					),
+				label: "pUSD->NegRiskCtfCollateralAdapter",
+			},
+			{
+				key: "CTF_APPROVAL_FOR_NEG_RISK_CTF_ADAPTER",
+				fn: () =>
+					ctf.setApprovalForAll(NEG_RISK_CTF_COLLATERAL_ADAPTER_ADDRESS, true),
+				label: "CTF->NegRiskCtfCollateralAdapter",
 			},
 		] as const;
 
-		// Execute only missing approvals
 		for (const { key, fn, label } of approvals) {
 			if (current.missing.includes(key)) {
 				const hash = await this.sendTx(fn, nonce++, waitConfs);
@@ -285,21 +334,23 @@ export class ApprovalRequiredError extends Error {
 				tool: "approve_allowances",
 				name: "Approve Allowances",
 				description:
-					"Grant USDC and CTF approvals for Polymarket (revocable anytime).",
+					"Grant pUSD and CTF approvals for Polymarket V2 (revocable anytime).",
 			},
 		};
 	}
 }
 
 /**
- * Get USDC contract instance (following Polymarket SDK pattern)
+ * Get the collateral token (pUSD) contract instance.
+ * Post April 2026 migration, the collateral is pUSD (1:1 USDC wrapper),
+ * not the bridged USDC.e that was used before.
  */
-function getUsdcContract(wallet: Wallet): Contract {
-	const USDC_ABI = [
+function getCollateralContract(wallet: Wallet): Contract {
+	const ERC20_ABI = [
 		"function allowance(address owner, address spender) view returns (uint256)",
 		"function approve(address spender, uint256 amount) returns (bool)",
 	];
-	return new Contract(POLYGON_ADDRESSES.USDC_ADDRESS, USDC_ABI, wallet);
+	return new Contract(POLYGON_ADDRESSES.COLLATERAL_ADDRESS, ERC20_ABI, wallet);
 }
 
 /**

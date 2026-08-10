@@ -8,7 +8,7 @@ const placeMarketOrderSchema = z.object({
 		.number()
 		.positive()
 		.describe(
-			"BUY orders: Dollar amount ($) to spend. SELL orders: Number of shares to sell. Minimum $1 for BUY orders.",
+			"BUY orders: pUSD amount to spend. SELL orders: Number of shares to sell. Minimum 1 pUSD for BUY orders.",
 		),
 	side: z.enum(["BUY", "SELL"]).describe("The side of the order: BUY or SELL"),
 	orderType: z
@@ -22,7 +22,7 @@ const placeMarketOrderSchema = z.object({
 export const placeMarketOrderTool = {
 	name: "place_market_order",
 	description:
-		"Place a market order that executes immediately at current market price. IMPORTANT: For BUY orders, amount is the dollar amount ($USD) you want to spend. For SELL orders, amount is the number of shares to sell. Example: amount=5, side=BUY means 'spend $5 to buy shares at market price'. Minimum $1 for BUY orders.",
+		"Place a market order that executes immediately at the current market price. For BUY orders, amount is the pUSD amount to spend. For SELL orders, amount is the number of shares to sell. Example: amount=5, side=BUY spends 5 pUSD. Minimum 1 pUSD for BUY orders.",
 	parameters: placeMarketOrderSchema,
 	execute: async (args: z.infer<typeof placeMarketOrderSchema>) =>
 		withApprovalGuard(() =>

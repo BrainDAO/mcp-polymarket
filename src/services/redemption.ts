@@ -15,18 +15,12 @@ const PARENT_COLLECTION_ID =
  * CTF (Conditional Tokens Framework) ABI for redemption operations
  */
 const CTF_ABI = [
-	"function balanceOf(address account, uint256 id) view returns (uint256)",
 	"function payoutDenominator(bytes32 conditionId) view returns (uint256)",
-	"function payoutNumerators(bytes32 conditionId, uint256 index) view returns (uint256)",
-	"function redeemPositions(address collateralToken, bytes32 parentCollectionId, bytes32 conditionId, uint256[] indexSets)",
 	"function isApprovedForAll(address owner, address operator) view returns (bool)",
 ];
 
-/**
- * NegRiskAdapter ABI for negative risk market redemption
- */
-const NEG_RISK_ADAPTER_ABI = [
-	"function redeemPositions(bytes32 conditionId, uint256[] amounts)",
+const COLLATERAL_ADAPTER_ABI = [
+	"function redeemPositions(address collateralToken, bytes32 parentCollectionId, bytes32 conditionId, uint256[] indexSets)",
 ];
 
 export interface RedeemResult {
@@ -37,8 +31,6 @@ export interface RedeemResult {
 
 export interface RedeemParams {
 	conditionId: string;
-	tokenId?: string;
-	outcomeIndex?: 0 | 1;
 	negRisk?: boolean;
 }
 
@@ -80,24 +72,20 @@ export class PolymarketRedemption {
 	}
 
 	/**
-	 * Get NegRiskAdapter contract instance
+	 * Get the V2 collateral adapter for a market type.
 	 */
-	private getNegRiskAdapterContract(): Contract {
+	private getCollateralAdapterContract(negRisk: boolean): Contract {
 		return new Contract(
-			POLYGON_ADDRESSES.NEG_RISK_ADAPTER_ADDRESS,
-			NEG_RISK_ADAPTER_ABI,
+			this.getCollateralAdapterAddress(negRisk),
+			COLLATERAL_ADAPTER_ABI,
 			this.signer,
 		);
 	}
 
-	/**
-	 * Get CTF token balance for a specific position
-	 */
-	async getCTFBalance(tokenId: string): Promise<bigint> {
-		const ctf = this.getCtfContract();
-		const walletAddress = this.getWalletAddress();
-		const balance: BigNumber = await ctf.balanceOf(walletAddress, tokenId);
-		return balance.toBigInt();
+	private getCollateralAdapterAddress(negRisk: boolean): string {
+		return negRisk
+			? POLYGON_ADDRESSES.NEG_RISK_CTF_COLLATERAL_ADAPTER_ADDRESS
+			: POLYGON_ADDRESSES.CTF_COLLATERAL_ADAPTER_ADDRESS;
 	}
 
 	/**
@@ -112,38 +100,13 @@ export class PolymarketRedemption {
 	}
 
 	/**
-	 * Get winning outcome index sets for a resolved binary market
-	 * Returns array of index sets where payout numerator > 0
-	 * For binary markets: [1] for first outcome won, [2] for second outcome won
+	 * Check whether the V2 collateral adapter can transfer the signer's CTF tokens.
 	 */
-	async getWinningIndexSets(conditionId: string): Promise<bigint[]> {
+	async isCollateralAdapterApproved(negRisk: boolean): Promise<boolean> {
 		const ctf = this.getCtfContract();
-		const conditionIdBytes32 = this.formatConditionId(conditionId);
-
-		// Get payout numerators for both outcomes (0 and 1)
-		const [numerator0, numerator1]: [BigNumber, BigNumber] = await Promise.all([
-			ctf.payoutNumerators(conditionIdBytes32, 0),
-			ctf.payoutNumerators(conditionIdBytes32, 1),
-		]);
-
-		// Build array of winning index sets
-		// Index set 1 = outcome 0, Index set 2 = outcome 1
-		const winningIndexSets: bigint[] = [];
-		if (numerator0.gt(0)) winningIndexSets.push(1n);
-		if (numerator1.gt(0)) winningIndexSets.push(2n);
-
-		return winningIndexSets;
-	}
-
-	/**
-	 * Check if NegRiskAdapter is approved to spend CTF tokens
-	 */
-	async isNegRiskAdapterApproved(): Promise<boolean> {
-		const ctf = this.getCtfContract();
-		const walletAddress = this.getWalletAddress();
 		return ctf.isApprovedForAll(
-			walletAddress,
-			POLYGON_ADDRESSES.NEG_RISK_ADAPTER_ADDRESS,
+			this.signer.address,
+			this.getCollateralAdapterAddress(negRisk),
 		);
 	}
 
@@ -159,26 +122,11 @@ export class PolymarketRedemption {
 	 * Claims winnings from markets that have been resolved
 	 */
 	async redeemPositions(params: RedeemParams): Promise<RedeemResult> {
-		const { conditionId, tokenId, outcomeIndex, negRisk = false } = params;
+		const { conditionId, negRisk = false } = params;
 
 		try {
 			const conditionIdBytes32 = this.formatConditionId(conditionId);
 
-			// Check token balance if tokenId provided
-			let tokenBalance = 0n;
-			if (tokenId) {
-				tokenBalance = await this.getCTFBalance(tokenId);
-				if (tokenBalance === 0n) {
-					return {
-						success: false,
-						error:
-							"No CTF tokens to redeem. Balance is 0 - position may have already been redeemed.",
-					};
-				}
-				log(`Token balance: ${tokenBalance.toString()}`);
-			}
-
-			// Check if market is resolved
 			const resolved = await this.isMarketResolved(conditionIdBytes32);
 			if (!resolved) {
 				return {
@@ -187,84 +135,40 @@ export class PolymarketRedemption {
 				};
 			}
 
-			let tx: providers.TransactionResponse;
-
-			if (negRisk) {
-				// For negative risk markets, use NegRiskAdapter
-				if (tokenBalance === 0n) {
-					return {
-						success: false,
-						error:
-							"No tokens to redeem - tokenId is required for negRisk markets",
-					};
-				}
-
-				// Check if NegRiskAdapter is approved
-				const adapterApproved = await this.isNegRiskAdapterApproved();
-				if (!adapterApproved) {
-					return {
-						success: false,
-						error:
-							"NegRiskAdapter is not approved to spend CTF tokens. Please run approve_allowances first.",
-					};
-				}
-
-				if (outcomeIndex !== 0 && outcomeIndex !== 1) {
-					return {
-						success: false,
-						error: "outcomeIndex must be 0 or 1 for negRisk redemption.",
-					};
-				}
-				// amounts[0] = outcome 0 (Yes) tokens, amounts[1] = outcome 1 (No) tokens
-				const amounts: [bigint, bigint] =
-					outcomeIndex === 0 ? [tokenBalance, 0n] : [0n, tokenBalance];
-
-				log(`Redeeming negRisk position:`);
-				log(`  Condition ID: ${conditionIdBytes32}`);
-				log(`  Amounts: [${amounts[0]}, ${amounts[1]}]`);
-
-				const negRiskAdapter = this.getNegRiskAdapterContract();
-				tx = await negRiskAdapter.redeemPositions(conditionIdBytes32, amounts, {
-					gasLimit: 300_000,
-				});
-			} else {
-				// For regular CTF markets
-				const winningIndexSets =
-					await this.getWinningIndexSets(conditionIdBytes32);
-
-				if (winningIndexSets.length === 0) {
-					return {
-						success: false,
-						error: "No winning outcomes found for this market.",
-					};
-				}
-
-				log(`Redeeming CTF position:`);
-				log(`  Condition ID: ${conditionIdBytes32}`);
-				log(`  Winning index sets: [${winningIndexSets.join(", ")}]`);
-
-				const ctf = this.getCtfContract();
-				tx = await ctf.redeemPositions(
-					POLYGON_ADDRESSES.USDC_ADDRESS,
-					PARENT_COLLECTION_ID,
-					conditionIdBytes32,
-					winningIndexSets,
-					{
-						gasLimit: 300_000,
-					},
-				);
+			const adapterApproved = await this.isCollateralAdapterApproved(negRisk);
+			if (!adapterApproved) {
+				return {
+					success: false,
+					error:
+						"Collateral adapter is not approved to spend CTF tokens. Please run approve_allowances first.",
+				};
 			}
+
+			const adapterAddress = this.getCollateralAdapterAddress(negRisk);
+			log(`Redeeming ${negRisk ? "NegRisk" : "standard"} position:`);
+			log(`  Condition ID: ${conditionIdBytes32}`);
+			log(`  Adapter: ${adapterAddress}`);
+
+			const adapter = this.getCollateralAdapterContract(negRisk);
+			const tx: providers.TransactionResponse = await adapter.redeemPositions(
+				POLYGON_ADDRESSES.COLLATERAL_ADDRESS,
+				PARENT_COLLECTION_ID,
+				conditionIdBytes32,
+				[1n, 2n],
+				{
+					gasLimit: 300_000,
+				},
+			);
 
 			log(`Transaction submitted: ${tx.hash}`);
 
-			// Wait for confirmation
 			const receipt = await tx.wait(1);
-
 			if (receipt.status === 0) {
 				return {
 					success: false,
 					txHash: tx.hash,
-					error: `Transaction reverted on-chain. Position may have already been redeemed.`,
+					error:
+						"Transaction reverted on-chain. Position may have already been redeemed.",
 				};
 			}
 

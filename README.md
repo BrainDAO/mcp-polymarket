@@ -78,7 +78,7 @@ Add the following configuration to your MCP client settings (e.g., `claude_deskt
 | `POLYGON_RPC_URL` | No | Polygon RPC URL for transactions | `https://polygon-rpc.com` |
 | `CLOB_API_BASE` | No | Polymarket CLOB API base URL | `https://clob.polymarket.com` |
 | `CHAIN_ID` | No | Blockchain network chain ID | `137` (Polygon) |
-| `SIGNATURE_TYPE` | No | Signature type for signing transactions | `2` |
+| `SIGNATURE_TYPE` | No | Order signature type (`0` EOA, `1` proxy, `2` Safe, `3` EIP-1271) | `0` without a funder, otherwise `2` |
 | `POLYMARKET_FUNDER` | No | Funder address for transactions | - |
 | `FUNDER_ADDRESS` | No | Alternative funder address (alias) | - |
 
@@ -96,7 +96,7 @@ Add the following configuration to your MCP client settings (e.g., `claude_deskt
 *   "Get detailed information about the 'will-trump-win-2024' market."
 
 ### 💼 Portfolio & Trading (Requires Private Key)
-*   "What's my current USDC balance and allowance?"
+*   "What's my current pUSD balance and allowance?"
 *   "Show me all my open orders across all markets."
 *   "Place a buy order for 100 shares at 0.65 price."
 *   "Cancel all my open orders on this market."
@@ -106,7 +106,7 @@ Add the following configuration to your MCP client settings (e.g., `claude_deskt
 <!-- AUTO-GENERATED TOOLS START -->
 
 ### `approve_allowances`
-Grant the USDC and Conditional Tokens approvals required to trade on Polymarket. Automatically approves only the contracts that don't already have approvals set. Includes both regular and NegRisk markets. These approvals are standard ERC20/ERC1155 approvals, revocable at any time in your wallet.
+Grant the pUSD and Conditional Token approvals required for Polymarket V2 trading and position management. Automatically approves only contracts that do not already have permission. Approvals are revocable at any time in your wallet.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -206,12 +206,12 @@ List all currently active markets with pagination. Returns markets that are not 
 | `offset` | number | false | 0 | Number of markets to skip for pagination (default: 0) |
 
 ### `place_market_order`
-Place a market order that executes immediately at current market price. IMPORTANT: For BUY orders, amount is the dollar amount ($USD) you want to spend. For SELL orders, amount is the number of shares to sell. Example: amount=5, side=BUY means 'spend $5 to buy shares at market price'. Minimum $1 for BUY orders.
+Place a market order that executes immediately at the current market price. For BUY orders, amount is the pUSD amount to spend. For SELL orders, amount is the number of shares to sell. Example: amount=5, side=BUY spends 5 pUSD. Minimum 1 pUSD for BUY orders.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `tokenId` | string | true | The token ID of the market outcome to trade |
-| `amount` | number | true | BUY orders: Dollar amount ($) to spend. SELL orders: Number of shares to sell. Minimum $1 for BUY orders. |
+| `amount` | number | true | BUY orders: pUSD amount to spend. SELL orders: Number of shares to sell. Minimum 1 pUSD for BUY orders. |
 | `side` | string | true | The side of the order: BUY or SELL |
 | `orderType` | string | false | Order type: FOK (Fill or Kill) or FAK (Fill and Kill). Default: FOK |
 
@@ -227,14 +227,12 @@ Place a limit order on Polymarket at a specific price. Specify the number of sha
 | `orderType` | string | false | Order type: GTC (Good Till Cancelled) or GTD (Good Till Date). Default: GTC |
 
 ### `redeem_positions`
-Redeem (claim) winnings from a resolved Polymarket prediction market. Use this to collect USDC from positions in markets that have been settled. For regular markets, you need the conditionId. For negative risk markets, you also need the tokenId and should set negRisk=true. The market must be resolved before redemption is possible.
+Redeem all winning outcome tokens from a resolved Polymarket market into pUSD. Provide the conditionId and set negRisk=true for negative-risk markets.
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `conditionId` | string | true |  | The condition ID (market ID) for the resolved market. This is typically a 32-byte hex string. |
-| `tokenId` | string | false |  | The token ID of the position to redeem. Required for negRisk markets, optional for regular markets. |
-| `outcomeIndex` | number | false |  | The outcome index: 0 for Yes/first outcome, 1 for No/second outcome. Used for negRisk markets to determine which tokens to redeem. |
-| `negRisk` | boolean | false | false | Whether this is a negative risk market. Negative risk markets use the NegRiskAdapter contract for redemption. Default: false |
+| `conditionId` | string | true |  | The condition ID for the resolved market. This is typically a 32-byte hex string. |
+| `negRisk` | boolean | false | false | Whether this is a negative-risk market. Selects the V2 NegRisk collateral adapter when true. Default: false |
 
 ### `search_markets`
 Search for markets, events, and profiles using text search.
