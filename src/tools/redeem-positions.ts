@@ -20,6 +20,13 @@ export const redeemPositionsTool = {
 	name: "redeem_positions",
 	description:
 		"Redeem all winning outcome tokens from a resolved Polymarket market into pUSD. Provide the conditionId and set negRisk=true for negative-risk markets.",
+	annotations: {
+		title: "Redeem Positions",
+		readOnlyHint: false,
+		destructiveHint: true,
+		idempotentHint: false,
+		openWorldHint: true,
+	},
 	parameters: redeemPositionsSchema,
 	execute: async (args: z.infer<typeof redeemPositionsSchema>) => {
 		try {

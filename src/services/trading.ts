@@ -16,6 +16,11 @@ import { providers, utils, Wallet } from "ethers";
 import { log } from "../util/log.js";
 import { PolymarketApprovals } from "./approvals.js";
 import { getConfig } from "./config.js";
+import {
+	getOrderLimitsFromEnv,
+	OrderLimitGuard,
+	type OrderLimits,
+} from "./order-limits.js";
 
 /** * Interface for trading configuration */
 export interface TradingConfig {
@@ -25,6 +30,8 @@ export interface TradingConfig {
 	signatureType?: number;
 	rpcUrl?: string;
 	host?: string;
+	/** Spending limits enforced before any order is posted. */
+	orderLimits?: OrderLimits;
 }
 
 /**
@@ -43,8 +50,10 @@ export class PolymarketTrading {
 	private signer: Wallet | null = null;
 	private config: TradingConfig;
 	private marketParamsCache: Map<string, MarketParams> = new Map();
+	private limitGuard: OrderLimitGuard;
 
 	constructor(config: TradingConfig) {
+		this.limitGuard = new OrderLimitGuard(config.orderLimits ?? {});
 		this.config = {
 			chainId: 137, // Polygon mainnet
 			...config,
@@ -124,6 +133,7 @@ export class PolymarketTrading {
 		log("Polymarket trading client initialized (v2 SDK)");
 		log(`  - Signer: ${await ethersSigner.getAddress()}`);
 		log(`  - Signature Type: ${cfg.signatureType}`);
+		log(`  - Order limits: ${this.limitGuard.describe()}`);
 		if (cfg.funderAddress) {
 			log(`  - Funder/Proxy: ${cfg.funderAddress}`);
 		}
@@ -219,6 +229,39 @@ export class PolymarketTrading {
 	}
 
 	/**
+	 * Best (highest) bid for a token, used to value market SELL orders, whose
+	 * amount is in shares rather than pUSD. Proceeds can't exceed shares * best bid.
+	 */
+	private async getBestBid(tokenId: string): Promise<number> {
+		const book = await this.getClient().getOrderBook(tokenId);
+		const prices = (book?.bids ?? [])
+			.map((level) => Number(level.price))
+			.filter((p) => Number.isFinite(p) && p > 0);
+		if (prices.length === 0) {
+			throw new Error(`No bids in the order book for token ${tokenId}`);
+		}
+		return Math.max(...prices);
+	}
+
+	/**
+	 * Reserve the order's notional against the spending limits, run `post`, and
+	 * release the reservation if posting fails. Throws OrderLimitError before
+	 * anything is signed or sent when a limit would be exceeded.
+	 */
+	private async withinLimits<T>(
+		orderUsd: number,
+		post: () => Promise<T>,
+	): Promise<T> {
+		const reservation = this.limitGuard.reserve(orderUsd);
+		try {
+			return await post();
+		} catch (err) {
+			reservation.release();
+			throw err;
+		}
+	}
+
+	/**
 	 * Clear the market parameters cache (useful if market settings change)
 	 */
 	clearMarketCache(tokenId?: string): void {
@@ -275,13 +318,15 @@ export class PolymarketTrading {
 			`   Market: negRisk=${marketParams.negRisk}, tickSize=${marketParams.tickSize}`,
 		);
 
-		return client.createAndPostOrder(
-			userOrder,
-			{
-				tickSize: (args.tickSize ?? marketParams.tickSize) as TickSize,
-				negRisk: args.negRisk ?? marketParams.negRisk,
-			},
-			orderType,
+		return this.withinLimits(args.price * args.size, () =>
+			client.createAndPostOrder(
+				userOrder,
+				{
+					tickSize: (args.tickSize ?? marketParams.tickSize) as TickSize,
+					negRisk: args.negRisk ?? marketParams.negRisk,
+				},
+				orderType,
+			),
 		);
 	}
 
@@ -326,13 +371,20 @@ export class PolymarketTrading {
 			`   Market: negRisk=${marketParams.negRisk}, tickSize=${marketParams.tickSize}`,
 		);
 
-		return client.createAndPostMarketOrder(
-			userMarketOrder,
-			{
-				tickSize: (args.tickSize ?? marketParams.tickSize) as TickSize,
-				negRisk: args.negRisk ?? marketParams.negRisk,
-			},
-			orderType,
+		const orderUsd =
+			side === Side.BUY
+				? args.amount
+				: args.amount * (await this.getBestBid(args.tokenId));
+
+		return this.withinLimits(orderUsd, () =>
+			client.createAndPostMarketOrder(
+				userMarketOrder,
+				{
+					tickSize: (args.tickSize ?? marketParams.tickSize) as TickSize,
+					negRisk: args.negRisk ?? marketParams.negRisk,
+				},
+				orderType,
+			),
 		);
 	}
 
@@ -507,6 +559,7 @@ export function getTradingInstance(): PolymarketTrading {
 			funderAddress: cfg.funderAddress,
 			rpcUrl: cfg.rpcUrl,
 			host: cfg.host,
+			orderLimits: getOrderLimitsFromEnv(),
 		});
 	}
 	return tradingInstance;

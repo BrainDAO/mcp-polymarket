@@ -22,7 +22,14 @@ const placeMarketOrderSchema = z.object({
 export const placeMarketOrderTool = {
 	name: "place_market_order",
 	description:
-		"Place a market order that executes immediately at the current market price. For BUY orders, amount is the pUSD amount to spend. For SELL orders, amount is the number of shares to sell. Example: amount=5, side=BUY spends 5 pUSD. Minimum 1 pUSD for BUY orders.",
+		"Place a market order that executes immediately at the current market price. For BUY orders, amount is the pUSD amount to spend. For SELL orders, amount is the number of shares to sell. Example: amount=5, side=BUY spends 5 pUSD. Minimum 1 pUSD for BUY orders. Rejected without being sent if it exceeds the server spending limits (POLYMARKET_MAX_ORDER_USD / POLYMARKET_MAX_SESSION_USD).",
+	annotations: {
+		title: "Place Market Order",
+		readOnlyHint: false,
+		destructiveHint: true,
+		idempotentHint: false,
+		openWorldHint: true,
+	},
 	parameters: placeMarketOrderSchema,
 	execute: async (args: z.infer<typeof placeMarketOrderSchema>) =>
 		withApprovalGuard(() =>

@@ -81,6 +81,30 @@ Add the following configuration to your MCP client settings (e.g., `claude_deskt
 | `SIGNATURE_TYPE` | No | Order signature type (`0` EOA, `1` proxy, `2` Safe, `3` EIP-1271) | `0` without a funder, otherwise `2` |
 | `POLYMARKET_FUNDER` | No | Funder address for transactions | - |
 | `FUNDER_ADDRESS` | No | Alternative funder address (alias) | - |
+| `POLYMARKET_MAX_ORDER_USD` | No | Max pUSD notional for a single order. Larger orders are rejected before signing. | No limit |
+| `POLYMARKET_MAX_SESSION_USD` | No | Max cumulative pUSD notional across all orders while the server runs | No limit |
+
+### 🛡️ Spending limits
+
+Many MCP hosts can be set to auto-approve tool calls. In that mode nothing but the wallet balance stops an agent from placing an order of any size, so **set limits whenever trading is enabled**:
+
+```json
+"env": {
+  "POLYMARKET_PRIVATE_KEY": "your_private_key_here",
+  "POLYMARKET_MAX_ORDER_USD": "25",
+  "POLYMARKET_MAX_SESSION_USD": "100"
+}
+```
+
+The server enforces these itself, next to the key, so they hold whatever host or agent is calling. Order notional is measured in pUSD:
+
+*   **Limit orders** (`place_order`): `price × size`
+*   **Market BUY** (`place_market_order`): `amount`
+*   **Market SELL** (`place_market_order`): `amount × best bid`, the most the sale can return
+
+An order over a limit comes back as an `ORDER_LIMIT_EXCEEDED` result and is never signed or sent. The session total counts every order the exchange accepted, including limit orders that are later cancelled, and resets when the server restarts. Malformed values stop the server at startup rather than silently disabling a limit.
+
+Trading tools also carry the MCP `destructiveHint` annotation, so hosts that respect it will ask before running them.
 
 ## 💡 Usage Examples
 
@@ -261,6 +285,11 @@ pnpm run build
 ### 👁️ Development Mode (Watch)
 ```bash
 pnpm run watch
+```
+
+### 🧪 Tests
+```bash
+pnpm test
 ```
 
 ### ✅ Linting & Formatting

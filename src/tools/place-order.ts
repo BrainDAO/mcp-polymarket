@@ -29,7 +29,14 @@ const placeOrderSchema = z.object({
 export const placeOrderTool = {
 	name: "place_order",
 	description:
-		"Place a limit order on Polymarket at a specific price. Specify the number of shares (size) and price (0-1). For both BUY and SELL, you specify the number of shares you want to trade. Example: size=10, price=0.6 means buy/sell 10 shares at $0.60 per share (total: $6).",
+		"Place a limit order on Polymarket at a specific price. Specify the number of shares (size) and price (0-1). For both BUY and SELL, you specify the number of shares you want to trade. Example: size=10, price=0.6 means buy/sell 10 shares at $0.60 per share (total: $6). Rejected without being sent if it exceeds the server spending limits (POLYMARKET_MAX_ORDER_USD / POLYMARKET_MAX_SESSION_USD).",
+	annotations: {
+		title: "Place Limit Order",
+		readOnlyHint: false,
+		destructiveHint: true,
+		idempotentHint: false,
+		openWorldHint: true,
+	},
 	parameters: placeOrderSchema,
 	execute: async (args: z.infer<typeof placeOrderSchema>) =>
 		withApprovalGuard(() =>

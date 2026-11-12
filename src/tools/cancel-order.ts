@@ -9,6 +9,13 @@ const cancelOrderSchema = z.object({
 export const cancelOrderTool = {
 	name: "cancel_order",
 	description: "Cancel a specific order by its ID.",
+	annotations: {
+		title: "Cancel Order",
+		readOnlyHint: false,
+		destructiveHint: true,
+		idempotentHint: false,
+		openWorldHint: true,
+	},
 	parameters: cancelOrderSchema,
 	execute: async (args: z.infer<typeof cancelOrderSchema>) =>
 		withApprovalGuard(() => tradeApi.cancelOrder(args.orderId)),
