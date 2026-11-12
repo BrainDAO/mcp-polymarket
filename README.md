@@ -230,7 +230,7 @@ List all currently active markets with pagination. Returns markets that are not 
 | `offset` | number | false | 0 | Number of markets to skip for pagination (default: 0) |
 
 ### `place_market_order`
-Place a market order that executes immediately at the current market price. For BUY orders, amount is the pUSD amount to spend. For SELL orders, amount is the number of shares to sell. Example: amount=5, side=BUY spends 5 pUSD. Minimum 1 pUSD for BUY orders.
+Place a market order that executes immediately at the current market price. For BUY orders, amount is the pUSD amount to spend. For SELL orders, amount is the number of shares to sell. Example: amount=5, side=BUY spends 5 pUSD. Minimum 1 pUSD for BUY orders. Rejected without being sent if it exceeds the server spending limits (POLYMARKET_MAX_ORDER_USD / POLYMARKET_MAX_SESSION_USD).
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -240,7 +240,7 @@ Place a market order that executes immediately at the current market price. For 
 | `orderType` | string | false | Order type: FOK (Fill or Kill) or FAK (Fill and Kill). Default: FOK |
 
 ### `place_order`
-Place a limit order on Polymarket at a specific price. Specify the number of shares (size) and price (0-1). For both BUY and SELL, you specify the number of shares you want to trade. Example: size=10, price=0.6 means buy/sell 10 shares at $0.60 per share (total: $6).
+Place a limit order on Polymarket at a specific price. Specify the number of shares (size) and price (0-1). For both BUY and SELL, you specify the number of shares you want to trade. Example: size=10, price=0.6 means buy/sell 10 shares at $0.60 per share (total: $6). Rejected without being sent if it exceeds the server spending limits (POLYMARKET_MAX_ORDER_USD / POLYMARKET_MAX_SESSION_USD).
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
