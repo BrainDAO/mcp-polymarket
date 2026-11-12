@@ -2,6 +2,10 @@
 
 import { readFileSync } from "node:fs";
 import { FastMCP } from "fastmcp";
+import {
+	getOrderLimitsFromEnv,
+	OrderLimitGuard,
+} from "./services/order-limits.js";
 import * as tools from "./tools/index.js";
 import { log } from "./util/log.js";
 
@@ -44,6 +48,10 @@ async function main() {
 		server.addTool(tools.getPositionsTool);
 
 		log("Trading features enabled (POLYMARKET_PRIVATE_KEY is configured)");
+		// Parse limits at startup so a malformed value fails fast instead of on the first order.
+		log(
+			`Order limits: ${new OrderLimitGuard(getOrderLimitsFromEnv()).describe()}`,
+		);
 	} else {
 		log(
 			"Read-only mode: Set POLYMARKET_PRIVATE_KEY environment variable to enable trading features",

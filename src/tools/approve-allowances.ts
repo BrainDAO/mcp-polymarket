@@ -17,6 +17,13 @@ export const approveAllowancesTool = {
 	name: "approve_allowances",
 	description:
 		"Grant the pUSD and Conditional Token approvals required for Polymarket V2 trading and position management. Automatically approves only contracts that do not already have permission. Approvals are revocable at any time in your wallet.",
+	annotations: {
+		title: "Approve Allowances",
+		readOnlyHint: false,
+		destructiveHint: true,
+		idempotentHint: false,
+		openWorldHint: true,
+	},
 	parameters: approveAllowancesSchema,
 	execute: async (args: z.infer<typeof approveAllowancesSchema>) => {
 		const svc = new PolymarketApprovals();

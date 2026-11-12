@@ -17,7 +17,8 @@
 		"start": "node dist/index.js",
 		"publish-packages": "pnpm run build && changeset publish",
 		"format": "biome format . --write",
-		"lint": "biome check ."
+		"lint": "biome check .",
+		"test": "node --import tsx --test --test-concurrency=2 test/*.test.ts"
 	},
 	"keywords": [
 		"mcp",
