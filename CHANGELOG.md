@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.0
+
+### Minor Changes
+
+- [#65](https://github.com/BrainDAO/mcp-polymarket/pull/65) [`2626023`](https://github.com/BrainDAO/mcp-polymarket/commit/26260239580a6428bcec4a49584871e249833ba5) Thanks [@Royal-lobster](https://github.com/Royal-lobster)! - Add server-side spending limits for order placement. Set `POLYMARKET_MAX_ORDER_USD` to cap a single order and `POLYMARKET_MAX_SESSION_USD` to cap cumulative order notional per server process. Orders over a limit are rejected with `ORDER_LIMIT_EXCEEDED` before anything is signed or sent, so an auto-approving MCP host can't commit more than the configured amount. Trading tools now also carry the MCP `destructiveHint` annotation.
+
 ## 0.1.0
 
 ### Minor Changes
